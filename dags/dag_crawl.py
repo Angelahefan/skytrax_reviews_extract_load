@@ -47,6 +47,17 @@ default_args = {
     "on_failure_callback": notify_failure,
 }
 
+# 按 review_type 分别配置最低阈值(先拍脑袋定一个"低于这个就离谱"的保守值,
+# 后续跑一段时间、攒了历史数据后可以再调整或换成动态均值)
+MIN_COUNT_THRESHOLDS = {
+    "airline": 15,
+    "airport": 10,
+    "lounge": 3,
+    "seat": 5,
+}
+DEFAULT_MIN_THRESHOLD = 5  # 没配置的类型,用这个兜底
+
+
 
 @dag(
     dag_id="skytrax_crawl",
@@ -107,6 +118,17 @@ def crawl_dag():
         for p in saved_paths:
             ymd = p.stem.replace("raw_data_", "")  # YYYYMMDD
             dates.add(date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:])).isoformat())
+
+        # 数量异常检测:抓到的条数明显低于该类型的历史正常水平时告警,
+        # 但不 raise —— 可能只是当天确实没什么新评论,不该让 DAG 失败。
+        count = len(saved_paths)
+        threshold = MIN_COUNT_THRESHOLDS.get(review_type, DEFAULT_MIN_THRESHOLD)
+        if count < threshold:
+            logger.warning(
+                f"[{review_type}] 抓取数量疑似异常:本次共抓到 {count} 条,"
+                f"低于阈值 {threshold}。可能原因:网站临时封锁IP / "
+                f"当天确实无新评论 / 页面结构变化导致解析失败。请人工核查。"
+            )
 
         return {"review_type": review_type, "dates": sorted(dates)}
 
